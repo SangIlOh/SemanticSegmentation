@@ -6,7 +6,7 @@ import logging
 import time
 
 from SimpleSegmentation import SEMANTIC_SEGMENTATION
-from SimpleSegmentation import weight_variable, weight_variable_deconv, bias_variable, conv2d_with_dropout, conv2d, deconv2d, max_pool, conv_pool
+from SimpleSegmentation import conv2d, deconv2d, max_pool
 
 
 def crop_and_concat( x1, x2, shape1, shape2):
@@ -75,35 +75,17 @@ class Unet( SEMANTIC_SEGMENTATION):
                         num_feature = ( 2 ** nl) * self._num_feature_root
 
                         if nl == 0:
-                            w1 = weight_variable( "W_conv1", shape = [ filter_size, filter_size, self._num_channel, num_feature], stddev = np.math.sqrt( 2.0 / ( ( filter_size ** 2) * self._num_channel)))
+                            h_conv1 = conv2d(self._x, kernelShape = [ filter_size, filter_size, self._num_channel, num_feature], padding = "VALID", addBias = True, scopeName = "conv1")
                         else:
-                            w1 = weight_variable( "W_conv1", shape = [ filter_size, filter_size, num_feature // 2, num_feature], stddev = np.math.sqrt( 2.0 / ( ( filter_size ** 2) * ( num_feature // 2))))
+                            h_conv1 = conv2d(pools[ -1], kernelShape = [ filter_size, filter_size, num_feature // 2, num_feature], padding = "VALID", addBias = True, scopeName = "conv1")
 
-                        b1 = bias_variable( "b_conv1", shape = [ num_feature])
-                
-                        w2  = weight_variable( "W_conv2", shape = [ filter_size, filter_size, num_feature, num_feature], stddev = np.math.sqrt( 2.0 / ( ( filter_size ** 2) * ( num_feature))))
-                        b2 = bias_variable( "b_conv2", shape = [ num_feature])
-
-                        if nl == 0:
-                            conv1 = conv2d( self._x, w1, name = "conv1")
-                        else:
-                            conv1 = conv2d( pools[ -1], w1, name = "conv1")
-                        h_conv1 = tf.nn.relu( conv1 + b1, "h_conv1")
-                        conv2 = conv2d( h_conv1, w2, name = "conv2")
-                        h_conv2 = tf.nn.relu( conv2 + b2, name = "h_conv2")
+                        h_conv2 = conv2d(h_conv1, kernelShape = [ filter_size, filter_size, num_feature, num_feature], padding = "VALID", addBias = True, scopeName = "conv2")
                             
-
                         if nl < self._num_layer - 1:
                             h_conv2_pool = max_pool( h_conv2, pool_size)
                             pools.append( h_conv2_pool)
                                                 
                         dw_h_convs.append( h_conv2)
-                        self._weights.append( w1)
-                        self._weights.append( w2)
-                        self._biases.append( b1)
-                        self._biases.append( b2)
-                        convs.append( conv1)
-                        convs.append( conv2)
                         layer_scope_id += 1
                     
                 up_input = dw_h_convs[ -1]
@@ -112,42 +94,21 @@ class Unet( SEMANTIC_SEGMENTATION):
                     with tf.name_scope( "%d_up" % layer_scope_id):
                         num_feature = ( 2 ** ( nl + 1)) * self._num_feature_root
 
-                        wd = weight_variable_deconv( "W_deconv", shape = [ 4, 4, num_feature // 2, num_feature])
-                        bd = bias_variable( "b_deconv", shape = [ num_feature // 2])
-
-                        deconv_shape = ( -1,) + self._up_size[ nl] + ( num_feature // 2,)
                         if nl == self._num_layer - 2:
-                            h_deconv = deconv2d( up_input, wd, pool_size) + bd
+                            h_deconv = deconv2d( up_input, kernelShape = [ 4, 4, num_feature // 2, num_feature], stride = pool_size, addBias = True, active_fn = None, scopeName = "deconv1")
                         else:
-                            h_deconv = deconv2d( up_h_convs[ -1], wd, pool_size) + bd
+                            h_deconv = deconv2d( up_h_convs[ -1], kernelShape = [ 4, 4, num_feature // 2, num_feature], stride = pool_size, addBias = True, active_fn = None, scopeName = "deconv1")
+                        
                         h_deconv_concat = crop_and_concat( dw_h_convs[ nl], h_deconv, self._dn_size[ nl], self._up_size[ nl])
 
-                        w1 = weight_variable( "W_conv1", shape = [ filter_size, filter_size, num_feature, num_feature // 2], stddev = np.math.sqrt( 2.0 / ( ( filter_size ** 2) * ( num_feature))))
-                        b1 = bias_variable( "b_conv1", shape = [ num_feature // 2])
+                        h_conv1 = conv2d(h_deconv_concat, kernelShape = [ filter_size, filter_size, num_feature, num_feature // 2], padding = "VALID", addBias = True, keepprob = self._keep_prob, scopeName = "conv1")
+                        h_conv2 = conv2d(h_conv1, kernelShape = [ filter_size, filter_size, num_feature // 2, num_feature // 2], padding = "VALID", addBias = True, keepprob = self._keep_prob, scopeName = "conv2")
                         
-                        w2 = weight_variable( "W_conv2", shape = [ filter_size, filter_size, num_feature // 2, num_feature // 2], stddev = np.math.sqrt( 2.0 / ( ( filter_size ** 2) * ( num_feature // 2))))
-                        b2 = bias_variable( "b_conv2", shape = [ num_feature // 2])
-
-                        conv1 = conv2d_with_dropout( h_deconv_concat, w1, self._keep_prob, name = "conv1")
-                        h_conv1 = tf.nn.relu( conv1 + b1, "h_conv1")
-                        conv2 = conv2d_with_dropout( h_conv1, w2, self._keep_prob, name = "conv2")
-                        h_conv2 = tf.nn.relu( conv2 + b2, name = "h_conv2")
-                    
                         up_h_convs.append( h_conv2)
-                        self._weights.append( w1)
-                        self._weights.append( w2)
-                        self._biases.append( b1)
-                        self._biases.append( b2)
-                        convs.append( conv1)
-                        convs.append( conv2)
                         layer_scope_id += 1
 
                 with tf.name_scope( "%d_output" % layer_scope_id):
-                    stddev = np.sqrt( 2 / self._num_feature_root)
-                    wo = weight_variable( "W_conv_output", shape = [ 1, 1, self._num_feature_root, self._num_class], stddev = stddev)
-                    bo = bias_variable( "b_conv_output", shape = [ self._num_class])
-                    conv_output = conv2d( up_h_convs[ -1], wo, name = "conv")
-                    output_map = tf.add( conv_output, bo, name = "h_conv")
+                    output_map = conv2d(up_h_convs[ -1], kernelShape = [ 1, 1, self._num_feature_root, self._num_class], padding = "VALID", addBias = True, active_fn = None, scopeName = "conv1")
                     
         self._logits = output_map
         self._outputs = self.pixel_wise_softmax_2( self._logits)

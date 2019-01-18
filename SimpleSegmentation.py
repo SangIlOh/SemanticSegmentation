@@ -4,13 +4,6 @@ import os
 import shutil
 import time
 
-def find_nth( haystack, needle, n):
-    start = haystack.find( needle)
-    while start >= 0 and n > 1:
-        start = haystack.find( needle, start + len( needle))
-        n -= 1
-    return start
-
 def weight_variable( name, shape, mean = 0.0, stddev = 1.0, trainable = True):
     initial = tf.truncated_normal( shape = shape, dtype = tf.float32, mean = mean, stddev = stddev)
     return tf.Variable( initial, name = name, trainable = trainable)
@@ -25,19 +18,67 @@ def bias_variable( name, shape, value = 0.1, trainable = True):
     initial = tf.constant( value, shape = shape, dtype = tf.float32)
     return tf.Variable( initial, name = name, trainable = trainable)
 
-def conv2d_with_dropout( x, W, keep_prob, name = None):
-    conv_2d = tf.nn.conv2d( x, W, strides = [ 1, 1, 1, 1], padding = "VALID")
-    return tf.nn.dropout( conv_2d, keep_prob, name = name)
-def conv2d( x, W, name = None):
-    conv_2d = tf.nn.conv2d( x, W, strides = [ 1, 1, 1, 1], padding = "VALID", name = name)
-    return conv_2d
-def deconv2d( x, W, stride , output_shape = None):
-    x_shape = tf.shape( x)
-    output_shape = tf.stack( [ x_shape[ 0], x_shape[ 1] * 2, x_shape[ 2] * 2, x_shape[ 3] // 2]) if output_shape is None else output_shape
+def conv2d( x,
+           kernelShape,
+           stride = 1,
+           padding = "SAME",
+           rate = 1,
+           addBias = False,
+           active_fn = tf.nn.relu,
+           keepprob = None,
+           reuse = None,
+           trainable = True,
+           scopeName = None):
 
-    return tf.nn.conv2d_transpose( x, W, output_shape, strides = [ 1, stride, stride, 1], padding = "SAME")
-def max_pool( x, n):
-    return tf.nn.max_pool( x, ksize = [ 1, n, n, 1], strides = [ 1, n, n, 1], padding = "VALID")
+    with tf.variable_scope(scopeName, reuse = reuse):
+        W = weight_variable("W", shape = kernelShape, stddev = np.math.sqrt( 2.0 / ( kernelShape[0] * kernelShape[1] * kernelShape[ 2])), trainable = trainable)
+
+        if rate == 1:
+            conv_2d = tf.nn.conv2d( x, W, strides = [ 1, stride, stride, 1], padding = padding)
+        elif rate > 1:
+            conv_2d = tf.nn.atrous_conv2d( x, W, rate = rate, padding = padding)
+
+        if addBias == True:
+            B = bias_variable("B", shape = [kernelShape[3]], trainable = trainable)
+            conv_2d = tf.add(conv_2d, B)
+
+        h_conv2d = active_fn(conv_2d) if active_fn is not None else conv_2d
+
+        if keepprob is not None:
+            h_conv2d = tf.nn.dropout( h_conv2d, keepprob)
+
+    return h_conv2d
+
+def deconv2d(x,
+             kernelShape,
+             stride = 1,
+             padding = "SAME",
+             addBias = False,
+             active_fn = tf.nn.relu,
+             reuse = None,
+             trainable = True,
+             output_shape = None,
+             scopeName = None):
+
+    with tf.variable_scope(scopeName, reuse = reuse):
+        Wd = weight_variable_deconv( "Wd", shape = kernelShape, trainable = trainable)
+
+        x_shape = tf.shape( x)
+        output_shape = tf.stack( [ x_shape[ 0], x_shape[ 1] * 2, x_shape[ 2] * 2, x_shape[ 3] // 2]) if output_shape is None else output_shape
+
+        deconv_2d = tf.nn.conv2d_transpose( x, Wd, output_shape, strides = [ 1, stride, stride, 1], padding = padding)
+
+        if addBias == True:
+            Bd = bias_variable("Bd", shape = [kernelShape[2]], trainable = trainable)
+            deconv_2d = tf.add(deconv_2d, Bd)
+
+        h_deconv2d = active_fn(deconv_2d) if active_fn is not None else deconv_2d
+
+    return h_deconv2d
+
+def max_pool( x, n, padding = "VALID"):
+    return tf.nn.max_pool( x, ksize = [ 1, n, n, 1], strides = [ 1, n, n, 1], padding = padding)
+
 def conv_pool( x, in_channel, out_channel, fs, sub_sample):
     w = weight_variable( "W_pool", shape = [ fs, fs, in_channel, out_channel], stddev = np.math.sqrt( 2.0 / ( ( fs ** 2) * out_channel)))
     return tf.nn.conv2d( x, w, strides = [ 1, sub_sample, sub_sample, 1], padding = "SAME")

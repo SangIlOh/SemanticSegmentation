@@ -6,7 +6,7 @@ import logging
 import time
 
 from SimpleSegmentation import SEMANTIC_SEGMENTATION
-from SimpleSegmentation import weight_variable, weight_variable_deconv, bias_variable, conv2d_with_dropout, conv2d, deconv2d, max_pool, conv_pool
+from SimpleSegmentation import weight_variable, bias_variable, conv2d, deconv2d, max_pool
 
 
 def conv_block( input, filter_cnts, in_strides, is_train, name, trainable_list = True, pre_activation = True):
@@ -147,43 +147,22 @@ class DeepLabv3( SEMANTIC_SEGMENTATION):
                     ASPP_input_size = tf.shape(ASPP_input)[1:3]
 
                     with tf.name_scope( "aconv"):
-                        w_conv1 = weight_variable( "w_conv1", shape = [ 3, 3, input_depth, aspp_depth], stddev = np.math.sqrt( 2.0 / ( 3 * 3 * input_depth)), trainable = trainable_list[5])
-                        b_conv1 = bias_variable( "b_conv1", shape = [ aspp_depth], trainable = trainable_list[ 5])
-                        conv1 = tf.nn.conv2d( ASPP_input, w_conv1, strides = [ 1, 1, 1, 1], padding = "SAME", name = "conv1")
-                        h_conv1 = tf.nn.relu( conv1 + b_conv1, name = "h_conv1")
+                        h_conv1 = conv2d(ASPP_input, kernelShape = [ 3, 3, input_depth, aspp_depth], addBias = True, trainable = trainable_list[5], scopeName = "conv1")
 
-                        w_aconv1 = weight_variable( "w_aconv1", shape = [ 3, 3, input_depth, aspp_depth], stddev = np.math.sqrt( 2.0 / ( 3 * 3 * input_depth)), trainable = trainable_list[6])
-                        b_aconv1 = bias_variable( "b_aconv1", shape = [ aspp_depth], trainable = trainable_list[ 6])
-                        aconv1 = tf.nn.atrous_conv2d(ASPP_input, w_aconv1, rate = atrous_rates[0], padding = "SAME", name = "aconv1")
-                        h_aconv1 = tf.nn.relu( aconv1 + b_aconv1, name = "h_aconv1")
-
-                        w_aconv2 = weight_variable( "w_aconv2", shape = [ 3, 3, input_depth, aspp_depth], stddev = np.math.sqrt( 2.0 / ( 3 * 3 * input_depth)), trainable = trainable_list[7])
-                        b_aconv2 = bias_variable( "b_aconv2", shape = [ aspp_depth], trainable = trainable_list[ 7])
-                        aconv2 = tf.nn.atrous_conv2d(ASPP_input, w_aconv2, rate = atrous_rates[1], padding = "SAME", name = "aconv2")
-                        h_aconv2 = tf.nn.relu( aconv2 + b_aconv2, name = "h_aconv2")
-
-                        w_aconv3 = weight_variable( "w_aconv3", shape = [ 3, 3, input_depth, aspp_depth], stddev = np.math.sqrt( 2.0 / ( 3 * 3 * input_depth)), trainable = trainable_list[8])
-                        b_aconv3 = bias_variable( "b_aconv3", shape = [ aspp_depth], trainable = trainable_list[ 8])
-                        aconv3 = tf.nn.atrous_conv2d(ASPP_input, w_aconv3, rate = atrous_rates[2], padding = "SAME", name = "aconv3")
-                        h_aconv3 = tf.nn.relu( aconv3 + b_aconv3, name = "h_aconv3")
+                        h_aconv1 = conv2d(ASPP_input, kernelShape = [ 3, 3, input_depth, aspp_depth], rate = atrous_rates[0], addBias = True, trainable = trainable_list[6], scopeName = "aconv1")
+                        h_aconv2 = conv2d(ASPP_input, kernelShape = [ 3, 3, input_depth, aspp_depth], rate = atrous_rates[1], addBias = True, trainable = trainable_list[7], scopeName = "aconv2")
+                        h_aconv3 = conv2d(ASPP_input, kernelShape = [ 3, 3, input_depth, aspp_depth], rate = atrous_rates[2], addBias = True, trainable = trainable_list[8], scopeName = "aconv3")
 
                     with tf.name_scope( "feat"):
                         input_pool = tf.reduce_mean(ASPP_input, [1, 2], name = "input_pool", keepdims = True)
 
-                        w_feat = weight_variable( "w_feat", shape = [ 1, 1, input_depth, aspp_depth], stddev = np.math.sqrt( 2.0 / ( 1 * 1 * input_depth )), trainable = trainable_list[9])
-                        b_feat = bias_variable( "b_feat", shape = [ aspp_depth], trainable = trainable_list[ 9])
-                        feat_conv = tf.nn.conv2d( input_pool, w_feat, strides = [ 1, 1, 1, 1], padding = "SAME", name = "feat_conv")
-                        h_feat_conv = tf.nn.relu( feat_conv + b_feat, name = "h_feat_conv")
-
+                        h_feat_conv = conv2d(input_pool, kernelShape = [ 1, 1, input_depth, aspp_depth], addBias = True, trainable = trainable_list[9], scopeName = "featconv")
                         feat_up = tf.image.resize_bilinear(h_feat_conv, ASPP_input_size, name = "feat_up")
 
                     with tf.name_scope( "feat_fuse"):
-                        feat_concat = tf.concat([conv1, aconv1, aconv2, aconv3, feat_up], axis=3, name='feat_concat')
+                        feat_concat = tf.concat([h_conv1, h_aconv1, h_aconv2, h_aconv3, feat_up], axis=3, name='feat_concat')
 
-                        w_fuse = weight_variable( "w_fuse", shape = [ 1, 1, feat_concat.get_shape()[ 3].value, aspp_depth], stddev = np.math.sqrt( 2.0 / ( 1 * 1 * feat_concat.get_shape()[ 3].value )), trainable = trainable_list[10])
-                        b_fuse = bias_variable( "b_fuse", shape = [ aspp_depth], trainable = trainable_list[ 10])
-                        fuse_conv = tf.nn.conv2d( feat_concat, w_fuse, strides = [ 1, 1, 1, 1], padding = "SAME", name = "fuse_conv")
-                        h_fuse_conv = tf.nn.relu( fuse_conv+ b_fuse, name = "h_fuse_conv")
+                        h_fuse_conv = conv2d(feat_concat, kernelShape = [ 1, 1, feat_concat.get_shape()[ 3].value, aspp_depth], addBias = True, trainable = trainable_list[10], scopeName = "fuseconv")
 
                     with tf.name_scope( "upsampling"):
                         w_up = weight_variable( "w_up", shape = [ 1, 1, aspp_depth, self._num_class], stddev = np.math.sqrt( 2.0 / ( 1 * 1 * aspp_depth )), trainable = trainable_list[11])
